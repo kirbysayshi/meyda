@@ -177,6 +177,12 @@ module.exports = function(audioContext,src,bufSize,callback){
 
 			//create complexarray to hold the spectrum
 			var data = new ComplexArray(bufferSize);
+			
+			//transform
+			var spec = data.FFT();
+			//assign to meyda
+			self.complexSpectrum = spec;
+			self.ampSpectrum = new Float32Array(bufferSize/2);
 
 			//create nodes
 			window.spn = audioContext.createScriptProcessor(bufferSize,1,1);
@@ -192,16 +198,12 @@ module.exports = function(audioContext,src,bufSize,callback){
 				data.map(function(value, i, n) {
 					value.real = windowedSignal[i];
 				});
-				//transform
-				var spec = data.FFT();
-				//assign to meyda
-				self.complexSpectrum = spec;
-				self.ampSpectrum = new Float32Array(bufferSize/2);
+
 				//calculate amplitude
 				for (var i = 0; i < bufferSize/2; i++) {
 					self.ampSpectrum[i] = Math.sqrt(Math.pow(spec.real[i],2) + Math.pow(spec.imag[i],2));
-
 				}
+
 				//call callback if applicable
 				if (typeof callback === "function" && EXTRACTION_STARTED) {
 					callback(self.get(_featuresToExtract));
