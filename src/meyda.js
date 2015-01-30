@@ -1,6 +1,7 @@
 // Meyda Javascript DSP library
 
 var ComplexArray = require('../lib/jsfft/complex_array').ComplexArray;
+
 // modifies ComplexArray
 var fft = require('../lib/jsfft/fft');
 
