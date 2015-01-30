@@ -14,6 +14,10 @@
   },
   "devDependencies": {},
   "scripts": {
+    "bundle" : "browserify ./src/meyda.js > meyda.js -s 'Meyda' -d",
+    "uglify": "uglifyjs meyda.js meyda.js > meyda.min.js",
+    "build" : "npm run bundle && npm run uglify",
+    "watch": "nodemon -w ./src -x npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
