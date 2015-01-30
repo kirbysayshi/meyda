@@ -72,19 +72,20 @@ var Meyda = function(audioContext,src,bufSize,callback){
 
 	self.windowing = function(sig, type){
 		var windowed = new Float32Array(sig.length);
+		var i ,len = sig.length;
 
 		if (type == "hanning") {
-			for (var i = 0; i < sig.length; i++) {
+			for (i = 0; i < len; i++) {
 				windowed[i] = sig[i]*self.hanning[i];
 			}
 		}
 		else if (type == "hamming") {
-			for (var i = 0; i < sig.length; i++) {
+			for (i = 0; i < len; i++) {
 				windowed[i] = sig[i]*self.hamming[i];
 			}
 		}
 		else if (type == "blackman") {
-			for (var i = 0; i < sig.length; i++) {
+			for (i = 0; i < len; i++) {
 				windowed[i] = sig[i]*self.blackman[i];
 			}
 		}
