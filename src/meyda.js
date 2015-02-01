@@ -1,272 +1,264 @@
 // Meyda Javascript DSP library
 
-var ComplexArray = require('../lib/jsfft/complex_array').ComplexArray;
+// Dependencies
+// ------------
 
-// modifies ComplexArray
-var fft = require('../lib/jsfft/fft');
+var ComplexArray 	= require('../lib/jsfft/complex_array').ComplexArray,
+		fft 					= require('../lib/jsfft/fft'); // modifies ComplexArray
 
-module.exports = function(audioContext,src,bufSize,callback){
-	
+var utils 				= require('./utils'),
+		isPowerOfTwo 	= utils.isPowerOfTwo,
+		µ 						= utils.µ;
+
+
+// Constructor
+// -----------
+
+function Meyda(audioContext, src, bufSize, callback) {
 	//I am myself
 	var self = this;
 	
-	self.featureExtractors = require('./extractors');
+	// make sure we can work
+	if(!isPowerOfTwo(bufSize)) {
+		throw new Error("Buffer size is not a power of two: Meyda will not run.");
+	}
+	
+	if(!audioContext) {
+		throw new Error("AudioContext wasn't specified: Meyda will not run.");
+	}
 
-	//default buffer size
-	var bufferSize = bufSize ? bufSize : 256;
+	var bufferSize = bufSize || 256; //default buffer size
+	var sampleRate = audioContext.sampleRate;
+	var source = src; //initial source
 
-	//initial source
-	var source = src;
+	this.audioContext = audioContext;
+	this.featureExtractors = {};
 
 	//callback controllers
-	var EXTRACTION_STARTED = false;
-	var _featuresToExtract;
-
-	//utilities
-	var µ = function(i, amplitudeSpect){
-		var numerator = 0;
-		var denominator = 0;
-		for(var k = 0; k < amplitudeSpect.length; k++){
-			numerator += Math.pow(k,i)*Math.abs(amplitudeSpect[k]);
-			denominator += amplitudeSpect[k];
-		}
-		return numerator/denominator;
-	};
-
-	var isPowerOfTwo = function(num) {
-		while (((num % 2) == 0) && num > 1) {
-			num /= 2;
-		}
-		return (num == 1);
-	};
-
-	//initilize bark scale (to be used in most perceptual features).
-	self.barkScale = new Float32Array(bufSize);
-
-	for(var i = 0; i < self.barkScale.length; i++){
-		self.barkScale[i] = i*audioContext.sampleRate/(bufSize);
-		self.barkScale[i] = 13*Math.atan(self.barkScale[i]/1315.8) + 3.5* Math.atan(Math.pow((self.barkScale[i]/7518),2));
-	}
-
+	this.EXTRACTION_STARTED = false;
+	this._featuresToExtract = null;
+	
 	//WINDOWING
 	//set default
-	self.windowingFunction = "hanning";
+	this.windowingFunction = "hanning";
+
+	//initilize bark scale (to be used in most perceptual features).
+	this.barkScale = this.computeBarkScale(bufferSize, sampleRate);
 
 	//create windows
-	self.hanning = new Float32Array(bufSize);
-	for (var i = 0; i < bufSize; i++) {
-		//According to the R documentation http://rgm.ogalab.net/RGM/R_rdfile?f=GENEAread/man/hanning.window.Rd&d=R_CC
-		self.hanning[i] = 0.5 - 0.5*Math.cos(2*Math.PI*i/(bufSize-1));
-	}
+	this.hanning = this.computeHanning(bufferSize);
+	this.hamming = this.computeHamming(bufferSize);
+	// this.blackman = this.computeBlackman(bufferSize);
 
-	self.hamming = new Float32Array(bufSize);
-	for (var i = 0; i < bufSize; i++) {
-		//According to http://uk.mathworks.com/help/signal/ref/hamming.html
-		self.hamming[i] = 0.54 - 0.46*Math.cos(2*Math.PI*(i/bufSize-1));
-	}
+	this.featureInfo = require('./feature-info'); // to be included per module
 
-	//UNFINISHED - blackman window implementation
+	//create complexarray to hold the spectrum
+	var computedSpectrumData = this.computeSpectrumData(bufferSize);
 
-	/*self.blackman = new Float32Array(bufSize);
-	//According to http://uk.mathworks.com/help/signal/ref/blackman.html
-	//first half of the window
-	for (var i = 0; i < (bufSize % 2) ? (bufSize+1)/2 : bufSize/2; i++) {
-		self.blackman[i] = 0.42 - 0.5*Math.cos(2*Math.PI*i/(bufSize-1)) + 0.08*Math.cos(4*Math.PI*i/(bufSize-1));
-	}
-	//second half of the window
-	for (var i = bufSize/2; i > 0; i--) {
-		self.blackman[bufSize - i] = self.blackman[i];
-	}*/
+	//assign to meyda
+	this.spectrumData = computedSpectrumData.data;
+	this.complexSpectrum = computedSpectrumData.spectrum;
+	this.ampSpectrum = computedSpectrumData.ampSpectrum;
 
-	self.windowing = function(sig, type){
-		var windowed = new Float32Array(sig.length);
-		var i ,len = sig.length;
+	// console.log(computedSpectrumData);
 
-		if (type == "hanning") {
-			for (i = 0; i < len; i++) {
-				windowed[i] = sig[i]*self.hanning[i];
-			}
-		}
-		else if (type == "hamming") {
-			for (i = 0; i < len; i++) {
-				windowed[i] = sig[i]*self.hamming[i];
-			}
-		}
-		else if (type == "blackman") {
-			for (i = 0; i < len; i++) {
-				windowed[i] = sig[i]*self.blackman[i];
-			}
-		}
+		// console.log(ampSpectrum)
+	this.initialiseExtractors();
 
-		return windowed;
-	};
+	//create nodes
+	window.spn = audioContext.createScriptProcessor(bufferSize,1,1);
 
-	//source setter method
-	self.setSource = function(_src) {
-		source = _src;
-		source.connect(window.spn);
-	};
+	window.spn.onaudioprocess = function(e) {
+		// "self" land over here because of the function closure
 
+		//this is to obtain the current amplitude spectrum
+		var signal = self.signal = e.inputBuffer.getChannelData(0);
+		var data = self.spectrumData;
+		var spec = self.complexSpectrum;
+		var ampSpectrum = self.ampSpectrum;
+		var windowedSignal = self.computeWindow(signal, self.windowingFunction);
 
-	self.initialiseExtractors = function() {
-
-		var loudness = self.featureExtractors.loudnessObject({
-			NUM_BARK_BANDS: 24,
-			barkScale: self.barkScale,
-			normalisedSpectrum: self.ampSpectrum,
-			sampleRate: audioContext.sampleRate
+		//map time domain
+		data.map(function(value, i, n) {
+			value.real = windowedSignal[i];
 		});
 
-		self.featureExtractors.loudness = loudness.process;
+		//calculate amplitude
+		self.computeAmplitude(spec, ampSpectrum, bufferSize);
+
+		//call callback if applicable
+		if (typeof callback === "function" && EXTRACTION_STARTED) {
+			callback(self.get(self._featuresToExtract));
+		}
 
 	};
 
-	if (isPowerOfTwo(bufferSize) && audioContext) {
-			self.featureInfo = {
-				"buffer": {
-					"type": "array"
-				},
-				"rms": {
-					"type": "number"
-				},
-				"energy": {
-					"type": "number"
-				},
-				"zcr": {
-					"type": "number"
-				},
-				"complexSpectrum": {
-					"type": "multipleArrays",
-					"arrayNames": {
-						"1": "real",
-						"2": "imag"
-					}
-				},
-				"amplitudeSpectrum": {
-					"type": "array"
-				},
-				"powerSpectrum": {
-					"type": "array"
-				},
-				"spectralCentroid": {
-					"type": "number"
-				},
-				"spectralFlatness": {
-					"type": "number"
-				},
-				"spectralSlope": {
-					"type": "number"
-				},
-				"spectralRolloff": {
-					"type": "number"
-				},
-				"spectralSpread": {
-					"type": "number"
-				},
-				"spectralSkewness": {
-					"type": "number"
-				},
-				"spectralKurtosis": {
-					"type": "number"
-				},
-				"loudness": {
-					"type": "multipleArrays",
-					"arrayNames": {
-						"1": "total",
-						"2": "specific"
-					}
-				},
-				"perceptualSpread": {
-					"type": "number"
-				},
-				"perceptualSharpness": {
-					"type": "number"
-				},
-				"mfcc": {
-					"type": "array"
-				}
-			};
+	window.spn.connect(audioContext.destination);
+	source.connect(window.spn, 0, 0);
 
-			//create complexarray to hold the spectrum
-			var data = new ComplexArray(bufferSize);
-			
-			//transform
-			var spec = data.FFT();
-			//assign to meyda
-			self.complexSpectrum = spec;
-			self.ampSpectrum = new Float32Array(bufferSize/2);
+	// constructors return "this" by default
+}
 
-			self.initialiseExtractors();
 
-			//create nodes
-			window.spn = audioContext.createScriptProcessor(bufferSize,1,1);
-			spn.connect(audioContext.destination);
+// Compute methods
+// ---------------
 
-			window.spn.onaudioprocess = function(e) {
-				//this is to obtain the current amplitude spectrum
-				var inputData = e.inputBuffer.getChannelData(0);
-				self.signal = inputData;
-				var windowedSignal = self.windowing(self.signal, self.windowingFunction);
+Meyda.prototype.computeAmplitude = function(complexSpectrum, ampSpectrum, bufferSize) {
 
-				//map time domain
-				data.map(function(value, i, n) {
-					value.real = windowedSignal[i];
-				});
+	// works inside and outside Meyda
+	complexSpectrum = complexSpectrum || this.complexSpectrum;
+	ampSpectrum 		= ampSpectrum 		|| this.ampSpectrum;
+	bufferSize 			= bufferSize 			|| this.bufferSize;
 
-				//calculate amplitude
-				for (var i = 0; i < bufferSize/2; i++) {
-					self.ampSpectrum[i] = Math.sqrt(Math.pow(spec.real[i],2) + Math.pow(spec.imag[i],2));
-				}
-
-				//call callback if applicable
-				if (typeof callback === "function" && EXTRACTION_STARTED) {
-					callback(self.get(_featuresToExtract));
-				}
-
-			};
-
-			self.start = function(features) {
-				_featuresToExtract = features;
-				EXTRACTION_STARTED = true;
-			};
-
-			self.stop = function() {
-				EXTRACTION_STARTED = false;
-			};
-
-			self.audioContext = audioContext;
-
-			self.get = function(feature) {
-
-				if(typeof feature === "object"){
-					var results = {};
-					for (var x = 0; x < feature.length; x++){
-						try{
-							results[feature[x]] = (self.featureExtractors[feature[x]](self.signal));
-						} catch (e){
-							console.error(e);
-						}
-					}
-					return results;
-				}
-				else if (typeof feature === "string"){
-					var res = self.featureExtractors[feature](self.signal);
-					return res;
-				}
-				else{
-					throw "Invalid Feature Format";
-				}
-			};
-			source.connect(window.spn, 0, 0);
-			return self;
-	}
-	else {
-		//handle errors
-		if (typeof audioContext == "undefined") {
-			throw "AudioContext wasn't specified: Meyda will not run.";
-		}
-		else {
-			throw "Buffer size is not a power of two: Meyda will not run.";
-		}
+	for (var i = 0; i < bufferSize/2; i++) {
+		ampSpectrum[i] = Math.sqrt(Math.pow(complexSpectrum.real[i],2) + Math.pow(complexSpectrum.imag[i],2));
 	}
 };
+
+Meyda.prototype.computeHamming = function(bufferSize) {
+	bufferSize = bufferSize || this.bufferSize;
+
+	var hamming = new Float32Array(bufferSize);
+	for (var i = 0; i < bufferSize; i++) {
+		//According to http://uk.mathworks.com/help/signal/ref/hamming.html
+		hamming[i] = 0.54 - 0.46*Math.cos(2*Math.PI*(i/bufferSize-1));
+	}
+
+	return hamming;
+};
+
+Meyda.prototype.computeHanning = function(bufferSize) {
+	bufferSize = bufferSize || this.bufferSize;
+
+	var hanning = new Float32Array(bufferSize);
+	for (var i = 0; i < bufferSize; i++) {
+		//According to the R documentation http://rgm.ogalab.net/RGM/R_rdfile?f=GENEAread/man/hanning.window.Rd&d=R_CC
+		hanning[i] = 0.5 - 0.5*Math.cos(2*Math.PI*i/(bufferSize-1));
+	}
+
+	return hanning;
+};
+
+//UNFINISHED - blackman window implementation
+/*
+Meyda.prototype.computeBlackman = function(bufferSize) {
+	bufferSize = bufferSize || this.bufferSize;
+	
+	var blackman = new Float32Array(bufferSize);
+	//According to http://uk.mathworks.com/help/signal/ref/blackman.html
+	//first half of the window
+	for (var i = 0; i < (bufferSize % 2) ? (bufferSize+1)/2 : bufferSize/2; i++) {
+		this.blackman[i] = 0.42 - 0.5*Math.cos(2*Math.PI*i/(bufferSize-1)) + 0.08*Math.cos(4*Math.PI*i/(bufferSize-1));
+	}
+	//second half of the window
+	for (var i = bufferSize/2; i > 0; i--) {
+		this.blackman[bufferSize - i] = this.blackman[i];
+	}
+};
+*/
+
+Meyda.prototype.computeWindow = function(sig, type) {
+
+	var i, len = sig.length;
+	var windowed = new Float32Array(len);
+
+	for (i = 0; i < len; i++) {
+		windowed[i] = sig[i] * this[type][i];
+	}
+	
+	return windowed;
+};
+
+Meyda.prototype.computeBarkScale = function(bufferSize, sampleRate) {
+	bufferSize = bufferSize || this.bufferSize;
+	sampleRate = sampleRate || this.sampleRate;
+
+  var barkScale = new Float32Array(bufferSize);
+
+  for(var i = 0; i < bufferSize; i++){
+    barkScale[i] = i * sampleRate / (bufferSize);
+    barkScale[i] = 13 * Math.atan(barkScale[i]/1315.8) + 3.5 * Math.atan(Math.pow((barkScale[i]/7518), 2));
+  }
+
+  return barkScale;
+};
+
+Meyda.prototype.computeSpectrumData = function(bufferSize) {
+	bufferSize = bufferSize || this.bufferSize;
+
+	//create complexarray to hold the spectrum
+	var data = new ComplexArray(bufferSize);
+	var spectrum = data.FFT(); //transform
+	var ampSpectrum = new Float32Array(bufferSize/2);
+
+	return {
+		data: data,
+		spectrum: spectrum,
+		ampSpectrum: ampSpectrum
+	};
+};
+
+
+// Meyda methods
+// -------------
+
+// loads all the extractor objects
+// initializes them and binds them
+// to the featureExtractors
+// and featureInfo lists
+// @NOTE (c/sh)ould be handeled differently
+Meyda.prototype.initialiseExtractors = function() {
+
+	var extractors = require('./extractors');
+
+	// Loudness
+	var loudness = extractors.loudness({
+		NUM_BARK_BANDS: 24,
+		barkScale: this.barkScale,
+		normalisedSpectrum: this.ampSpectrum,
+		sampleRate: this.audioContext.sampleRate
+	});
+
+	this.featureExtractors.loudness = loudness;
+	this.featureInfo.loudness = loudness.info;
+
+	// Rest of the extractors
+	// ...
+};
+
+//source setter method
+Meyda.prototype.setSource = function(_src) {
+	_src.connect(window.spn);
+};
+
+Meyda.prototype.start = function(features) {
+	this._featuresToExtract = features;
+	this.EXTRACTION_STARTED = true;
+};
+
+Meyda.prototype.stop = function() {
+	this._featuresToExtract = null;
+	this.EXTRACTION_STARTED = false;
+};
+
+// data pulling
+Meyda.prototype.get = function(feature) {
+
+	if(typeof feature === "object"){
+		var results = {};
+		for (var x = 0; x < feature.length; x++){
+			try{
+				results[feature[x]] = (this.featureExtractors[feature[x]].process(this.signal));
+			} catch (e){
+				console.error(e);
+			}
+		}
+		return results;
+	} else if (typeof feature === "string"){
+		return this.featureExtractors[feature].process(this.signal);
+	} else{
+		throw new Error("Invalid Feature Format");
+	}
+};
+
+module.exports = Meyda;
