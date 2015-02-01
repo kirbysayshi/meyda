@@ -108,6 +108,18 @@ module.exports = function(audioContext,src,bufSize,callback){
 	};
 
 
+	self.initialiseExtractors = function() {
+
+		var loudness = self.featureExtractors.loudnessObject({
+			NUM_BARK_BANDS: 24,
+			barkScale: self.barkScale,
+			normalisedSpectrum: self.ampSpectrum,
+			sampleRate: audioContext.sampleRate
+		});
+
+		self.featureExtractors.loudness = loudness.process;
+
+	};
 
 	if (isPowerOfTwo(bufferSize) && audioContext) {
 			self.featureInfo = {
@@ -184,6 +196,8 @@ module.exports = function(audioContext,src,bufSize,callback){
 			self.complexSpectrum = spec;
 			self.ampSpectrum = new Float32Array(bufferSize/2);
 
+			self.initialiseExtractors();
+
 			//create nodes
 			window.spn = audioContext.createScriptProcessor(bufferSize,1,1);
 			spn.connect(audioContext.destination);
@@ -223,11 +237,12 @@ module.exports = function(audioContext,src,bufSize,callback){
 			self.audioContext = audioContext;
 
 			self.get = function(feature) {
+
 				if(typeof feature === "object"){
 					var results = {};
 					for (var x = 0; x < feature.length; x++){
 						try{
-							results[feature[x]] = (self.featureExtractors[feature[x]](bufferSize, self));
+							results[feature[x]] = (self.featureExtractors[feature[x]](self.signal));
 						} catch (e){
 							console.error(e);
 						}
@@ -235,7 +250,8 @@ module.exports = function(audioContext,src,bufSize,callback){
 					return results;
 				}
 				else if (typeof feature === "string"){
-					return self.featureExtractors[feature](bufferSize, self);
+					var res = self.featureExtractors[feature](self.signal);
+					return res;
 				}
 				else{
 					throw "Invalid Feature Format";

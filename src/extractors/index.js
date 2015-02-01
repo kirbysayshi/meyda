@@ -13,7 +13,7 @@ module.exports = {
   amplitudeSpectrum: require('./amplitudeSpectrum'),
   zcr: require('./zcr'),
   powerSpectrum: require('./powerSpectrum'),
-  loudness: require('./loudness'),
+  loudnessObject: require('./loudness'),
   perceptualSpread: require('./perceptualSpread'),
   perceptualSharpness: require('./perceptualSharpness'),
   mfcc: require('./mfcc')

@@ -1,46 +1,77 @@
-module.exports = function(bufferSize, m) {
-  var barkScale = new Float32Array(m.ampSpectrum.length);
-  var NUM_BARK_BANDS = 24;
-  var specific = new Float32Array(NUM_BARK_BANDS);
-  var tot = 0;
-  var normalisedSpectrum = m.ampSpectrum;
-  var bbLimits = new Int32Array(NUM_BARK_BANDS + 1);
 
-  for (var i = 0; i < barkScale.length; i++) {
-    barkScale[i] = i * m.audioContext.sampleRate / (bufferSize);
-    barkScale[i] = 13 * Math.atan(barkScale[i] / 1315.8) + 3.5 * Math.atan(Math.pow((barkScale[i] / 7518), 2));
-  }
+function Loudness(opts) {
+  if (!(this instanceof Loudness)) return new Loudness(opts);
 
+  this.NUM_BARK_BANDS = NUM_BARK_BANDS = opts.NUM_BARK_BANDS || 24;
+  this.normalisedSpectrum = opts.normalisedSpectrum;
+  this.sampleRate = opts.sampleRate;
 
+  this.specific = new Float32Array(NUM_BARK_BANDS);
+  this.process = this.process.bind(this);
+  this.barkScale = opts.barkScale;
+}
+
+Loudness.prototype.createBarkBandLimits = function() {
+  var nSpectrumLength = this.normalisedSpectrum.length;
+  var NUM_BARK_BANDS = this.NUM_BARK_BANDS;
+  var barkScale = this.barkScale;
+  var bbLimits = new Int32Array(NUM_BARK_BANDS+1);
+  
   bbLimits[0] = 0;
-  var currentBandEnd = barkScale[m.ampSpectrum.length - 1] / NUM_BARK_BANDS;
+  var currentBandEnd = barkScale[nSpectrumLength-1]/NUM_BARK_BANDS;
   var currentBand = 1;
-  for (var i = 0; i < m.ampSpectrum.length; i++) {
-    while (barkScale[i] > currentBandEnd) {
-      bbLimits[currentBand++] = i;
-      currentBandEnd = currentBand * barkScale[m.ampSpectrum.length - 1] / NUM_BARK_BANDS;
-    }
+  for(var i = 0; i<nSpectrumLength; i++){
+   while(barkScale[i] > currentBandEnd) {
+     bbLimits[currentBand++] = i;
+     currentBandEnd = currentBand*barkScale[nSpectrumLength-1]/NUM_BARK_BANDS;
+   }
   }
 
-  bbLimits[NUM_BARK_BANDS] = m.ampSpectrum.length - 1;
+  bbLimits[NUM_BARK_BANDS] = nSpectrumLength-1;
+
+  return bbLimits;
+};
+
+Loudness.prototype.calcSpecificLoudness = function(bbLimits) {
+  var NUM_BARK_BANDS = this.NUM_BARK_BANDS;
+  var specific = this.specific;
+  var normalisedSpectrum = this.normalisedSpectrum;
+
+  for (var i = 0; i < NUM_BARK_BANDS; i++){
+   var sum = 0;
+   for (var j = bbLimits[i] ; j < bbLimits[i+1] ; j++) {
+
+     sum += normalisedSpectrum[j];
+   }
+
+   specific[i] = Math.pow(sum, 0.23);
+  }
+
+  return specific;
+};
+
+Loudness.prototype.sumArray = function(array) {
+  var sum = 0;
+
+  for (var i = 0; i < array.length; i++) {
+    sum += array[i];
+  }
+
+  return sum;
+};
+
+Loudness.prototype.process = function(buffer) {
+    
+  var bbLimits  = this.createBarkBandLimits();
 
   //process
+  var specific  = this.calcSpecificLoudness(bbLimits);
+  var total = this.sumArray(specific);
 
-  for (var i = 0; i < NUM_BARK_BANDS; i++) {
-    var sum = 0;
-    for (var j = bbLimits[i]; j < bbLimits[i + 1]; j++) {
-
-      sum += normalisedSpectrum[j];
-    }
-    specific[i] = Math.pow(sum, 0.23);
-  }
-
-  //get total loudness
-  for (var i = 0; i < specific.length; i++) {
-    tot += specific[i];
-  }
   return {
-    "specific": specific,
-    "total": tot
+    specific: specific,
+    total: total
   };
 };
+
+module.exports = Loudness;
