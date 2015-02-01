@@ -58,7 +58,7 @@ Loudness.prototype.computeSpecificLoudness = function(bbLimits, specific, nSpect
     for (var j = bbLimits[i] ; j < bbLimits[i+1] ; j++) {
       sum += nSpectrum[j];
     }
-    console.log(sum)
+
     specific[i] = Math.pow(sum, 0.23);
   }
 
