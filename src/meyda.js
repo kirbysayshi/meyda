@@ -15,7 +15,7 @@ var utils 				= require('./utils'),
 // -----------
 
 function Meyda(audioContext, src, bufSize, callback) {
-	//I am myself
+	// reference to use inside new scopes
 	var self = this;
 	
 	// make sure we can work
