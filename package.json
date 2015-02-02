@@ -7,16 +7,20 @@
     "example": "examples"
   },
   "dependencies": {
+    "es6ify": "^1.6.0",
     "grunt": "~0.4.5",
-    "grunt-contrib-uglify": "~0.7.0",
+    "grunt-contrib-clean": "~0.6.0",
     "grunt-contrib-concat": "~0.5.0",
-    "grunt-contrib-clean": "~0.6.0"
+    "grunt-contrib-uglify": "~0.7.0"
   },
   "devDependencies": {},
+  "browserify": {
+    "transforms": ["es6ify"]
+  },
   "scripts": {
-    "bundle" : "browserify ./src/meyda.js > meyda.js -s 'Meyda' -d",
-    "uglify": "uglifyjs meyda.js meyda.js > meyda.min.js",
-    "build" : "npm run bundle && npm run uglify",
+    "bundle": "browserify ./src/meyda.js > meyda.js -s 'Meyda' -d -t es6ify",
+    "uglify": "uglifyjs meyda.js > meyda.min.js",
+    "build": "npm run bundle && npm run uglify",
     "watch": "nodemon -w ./src -x npm run bundle",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
